@@ -14,7 +14,7 @@ Este projeto contem uma funcao serverless simples que responde a requisicoes HTT
 
 ### Passo a passo
 1. Clone o repositorio para sua maquina:
-   git clone https://github.com/seu-usuario/cloud-serverless-checkpoint1.git
+   git clone https://github.com//StyleNine/servelessHTTP.git
 
 2. Entre na pasta do projeto:
    cd CP_1
