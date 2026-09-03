@@ -3,7 +3,7 @@ main:
   steps:
     - init_variables:
         assign:
-          - execution_id: ${default(map.get(args, "idempotency_key"), sys.execution_id())}
+          - execution_id: ${default(map.get(args, "idempotency_key"), sys.execution_id)}
           - target_service_url: ${sys.get_env("TARGET_SERVICE_URL")}
           - dlq_topic_project: ${sys.get_env("GCP_PROJECT_ID")}
           - dlq_topic_name: "topico-dlq-checkpoint3"
