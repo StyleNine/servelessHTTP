@@ -12,13 +12,15 @@ main:
         try:
           steps:
             - call_serverless_function:
-                call: http.get
-                args:
-                  url: ${target_service_url}
-                  headers:
-                    X-Idempotency-Key: ${execution_id}
-                  auth:
-                    type: OIDC
+                try:
+                  call: http.get
+                  args:
+                    url: ${target_service_url}
+                    headers:
+                      X-Idempotency-Key: ${execution_id}
+                    auth:
+                      type: OIDC
+                  result: function_response
                 retry:
                   predicate: ${http.default_retry_predicate}
                   max_retries: 3
@@ -26,7 +28,6 @@ main:
                     initial_delay: 2
                     max_delay: 10
                     factor: 2
-                result: function_response
 
             - return_success:
                 return:
