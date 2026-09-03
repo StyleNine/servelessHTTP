@@ -3,56 +3,54 @@ main:
   steps:
     - init_variables:
         assign:
-          execution_id: ${default(map.get(args, "idempotency_key"), sys.execution_id())}
-          target_service_url: ${sys.get_env("TARGET_SERVICE_URL")}
-          dlq_topic_project: ${sys.get_env("GCP_PROJECT_ID")}
-          dlq_topic_name: "topico-dlq-checkpoint3"
+          - execution_id: ${default(map.get(args, "idempotency_key"), sys.execution_id())}
+          - target_service_url: ${sys.get_env("TARGET_SERVICE_URL")}
+          - dlq_topic_project: ${sys.get_env("GCP_PROJECT_ID")}
+          - dlq_topic_name: "topico-dlq-checkpoint3"
 
-    # Step 1: Chamada para a Função Serverless com Retry
-    - call_serverless_function:
+    # Passo principal envelopado com try/catch
+    - execute_and_handle_errors:
         try:
-          call: http.get
-          args:
-            url: ${target_service_url}
-            headers:
-              X-Idempotency-Key: ${execution_id}
-            auth:
-              type: OIDC
-          result: function_response
-        retry:
-          predicate: ${http.default_retry_predicate}
-          max_retries: 3
-          backoff:
-            initial_delay: 2
-            max_delay: 10
-            factor: 2
+          steps:
+            - call_serverless_function:
+                try:
+                  call: http.get
+                  args:
+                    url: ${target_service_url}
+                    headers:
+                      X-Idempotency-Key: ${execution_id}
+                    auth:
+                      type: OIDC
+                  result: function_response
+                retry:
+                  predicate: ${http.default_retry_predicate}
+                  max_retries: 3
+                  backoff:
+                    initial_delay: 2
+                    max_delay: 10
+                    factor: 2
 
-    # Step 2: Sucesso
-    - return_success:
-        return:
-          status: "SUCCESS"
-          idempotency_key: ${execution_id}
-          payload: ${function_response.body}
-
-    # Step 3: Tratamento de Erros e envio para DLQ
-    - handle_failure:
+            - return_success:
+                return:
+                  status: "SUCCESS"
+                  idempotency_key: ${execution_id}
+                  payload: ${function_response.body}
+        
+        # Bloco catch posicionado como irmão do bloco try
         catch:
           exception: error_details
           steps:
-            # 1. Monta o objeto de erro de forma limpa em variáveis
             - prepare_dlq_payload:
                 assign:
-                  error_payload:
-                    execution_id: ${execution_id}
-                    error_message: ${default(map.get(error_details, "message"), "Erro desconhecido")}
-                    timestamp: ${sys.now()}
+                  - error_payload:
+                      execution_id: ${execution_id}
+                      error_message: ${default(map.get(error_details, "message"), "Erro desconhecido")}
+                      timestamp: ${sys.now()}
             
-            # 2. Converte para JSON e encoda em Base64
             - encode_dlq_payload:
                 assign:
-                  encoded_data: ${base64.encode(json.encode(error_payload))}
+                  - encoded_data: ${base64.encode(json.encode(error_payload))}
 
-            # 3. Publica no tópico do Pub/Sub
             - publish_to_dlq:
                 call: googleapis.pubsub.v1.projects.topics.publish
                 args:
