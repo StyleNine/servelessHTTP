@@ -1,30 +1,36 @@
-import base64
+import os
 import requests
-import json
+from flask import Flask, request, jsonify
 
-def handle_pubsub_event(event, context):
-    """
-    Função disparada automaticamente quando uma mensagem é publicada no Pub/Sub.
-    """
-    # 1. Decodifica a mensagem recebida do Pub/Sub
-    if 'data' in event:
-        pubsub_message = base64.b64decode(event['data']).decode('utf-8')
-        print(f"Mensagem recebida do Pub/Sub: {pubsub_message}")
-    else:
-        print("Mensagem Pub/Sub recebida sem corpo de dados.")
+app = Flask(__name__)
 
-    # 2. Executa a lógica da API do Chuck Norris
+# Cache simples em memória para simular idempotência (Em produção, usa-se Redis ou Firestore)
+PROCESSED_REQUESTS = set()
+
+@app.route('/', methods=['GET', 'POST'])
+def get_chuck_joke():
+    # Obtém o cabeçalho de Idempotência
+    idempotency_key = request.headers.get("X-Idempotency-Key")
+
+    if idempotency_key and idempotency_key in PROCESSED_REQUESTS:
+        return jsonify({
+            "status": "SKIPPED",
+            "message": "Requisição já processada anteriormente (Idempotente)."
+        }), 200
+
     url = "https://api.chucknorris.io/jokes/random"
     
     try:
         response = requests.get(url, timeout=5)
         response.raise_for_status()
         data = response.json()
-        
         joke = data.get("value", "Nenhuma piada encontrada.")
         
-        # Em arquiteturas orientadas a eventos, o resultado é enviado para os Logs (Cloud Logging)
-        print(f"PIADA GERADA: {joke}")
+        # Registra a chave como processada
+        if idempotency_key:
+            PROCESSED_REQUESTS.add(idempotency_key)
+
+        return joke, 200, {'Content-Type': 'text/plain; charset=utf-8'}
 
     except requests.RequestException as e:
-        print(f"Erro ao buscar piada da API: {str(e)}")
+        return f"Erro ao buscar piada: {str(e)}", 500
