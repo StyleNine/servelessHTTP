@@ -3,19 +3,22 @@ main:
   steps:
     - init_variables:
         assign:
-          - project_id: ${sys.get_env("GOOGLE_CLOUD_PROJECT_ID")}
-          - topic_dlq: "topico-dead-letter"
-          - run_service_url: "https://seu-servico-cloud-run-XXXXX.a.run.app" # Substitua pela sua URL
+          execution_id: ${default(map.get(args, "idempotency_key"), sys.execution_id())}
+          target_service_url: ${sys.get_env("TARGET_SERVICE_URL")}
+          dlq_topic_project: ${sys.get_env("GCP_PROJECT_ID")}
+          dlq_topic_name: "topico-dlq-checkpoint3"
 
-    - call_chuck_norris_service:
+    # Step 1: Chamada para a Função Serverless com Retry
+    - call_serverless_function:
         try:
           call: http.get
           args:
-            url: ${run_service_url}
+            url: ${target_service_url}
+            headers:
+              X-Idempotency-Key: ${execution_id}
             auth:
-              type: OIDC # Autenticação segura sem expor chaves no código
-            timeout: 10
-          result: api_response
+              type: OIDC
+          result: function_response
         retry:
           predicate: ${http.default_retry_predicate}
           max_retries: 3
@@ -24,23 +27,43 @@ main:
             max_delay: 10
             factor: 2
 
-    - check_response:
-        switch:
-          - condition: ${api_response.status == 200}
-            next: process_success
-        next: handle_failure
-
-    - process_success:
+    # Step 2: Sucesso
+    - return_success:
         return:
           status: "SUCCESS"
-          joke_content: ${api_response.body}
+          idempotency_key: ${execution_id}
+          payload: ${function_response.body}
 
+    # Step 3: Tratamento de Erros e envio para DLQ
     - handle_failure:
-        call: googleapis.pubsub.v1.projects.topics.publish
-        args:
-          topic: ${"projects/" + project_id + "/topics/" + topic_dlq}
-          body:
-            messages:
-              - data: ${base64.encode(json.encode({"error": "Falha no processamento", "details": api_response}))}
-        return:
-          status: "FAILED_SENT_TO_DLQ"
+        catch:
+          exception: error_details
+          steps:
+            # 1. Monta o objeto de erro de forma limpa em variáveis
+            - prepare_dlq_payload:
+                assign:
+                  error_payload:
+                    execution_id: ${execution_id}
+                    error_message: ${default(map.get(error_details, "message"), "Erro desconhecido")}
+                    timestamp: ${sys.now()}
+            
+            # 2. Converte para JSON e encoda em Base64
+            - encode_dlq_payload:
+                assign:
+                  encoded_data: ${base64.encode(json.encode(error_payload))}
+
+            # 3. Publica no tópico do Pub/Sub
+            - publish_to_dlq:
+                call: googleapis.pubsub.v1.projects.topics.publish
+                args:
+                  topic: ${"projects/" + dlq_topic_project + "/topics/" + dlq_topic_name}
+                  body:
+                    messages:
+                      - data: ${encoded_data}
+
+            - return_dlq_failure:
+                return:
+                  status: "FAILED"
+                  idempotency_key: ${execution_id}
+                  error: ${default(map.get(error_details, "message"), "Erro executando o fluxo")}
+                  action: "Enviado para a Dead-Letter Queue (DLQ)"
