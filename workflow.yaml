@@ -8,20 +8,17 @@ main:
           - dlq_topic_project: ${sys.get_env("GCP_PROJECT_ID")}
           - dlq_topic_name: "topico-dlq-checkpoint3"
 
-    # Passo principal envelopado com try/catch
     - execute_and_handle_errors:
         try:
           steps:
             - call_serverless_function:
-                try:
-                  call: http.get
-                  args:
-                    url: ${target_service_url}
-                    headers:
-                      X-Idempotency-Key: ${execution_id}
-                    auth:
-                      type: OIDC
-                  result: function_response
+                call: http.get
+                args:
+                  url: ${target_service_url}
+                  headers:
+                    X-Idempotency-Key: ${execution_id}
+                  auth:
+                    type: OIDC
                 retry:
                   predicate: ${http.default_retry_predicate}
                   max_retries: 3
@@ -29,16 +26,16 @@ main:
                     initial_delay: 2
                     max_delay: 10
                     factor: 2
+                result: function_response
 
             - return_success:
                 return:
                   status: "SUCCESS"
                   idempotency_key: ${execution_id}
                   payload: ${function_response.body}
-        
-        # Bloco catch posicionado como irmão do bloco try
-        catch:
-          exception: error_details
+
+        except:
+          as: error_details
           steps:
             - prepare_dlq_payload:
                 assign:
@@ -46,7 +43,7 @@ main:
                       execution_id: ${execution_id}
                       error_message: ${default(map.get(error_details, "message"), "Erro desconhecido")}
                       timestamp: ${sys.now()}
-            
+
             - encode_dlq_payload:
                 assign:
                   - encoded_data: ${base64.encode(json.encode(error_payload))}
