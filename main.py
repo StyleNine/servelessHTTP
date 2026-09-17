@@ -1,36 +1,74 @@
 import os
+import json
+import logging
 import requests
 from flask import Flask, request, jsonify
 
+# Configuração de Logger para formato JSON
+class JsonFormatter(logging.Formatter):
+    def format(self, record):
+        log_record = {
+            "severity": record.levelname,
+            "message": record.getMessage(),
+            "component": "chuck-norris-service",
+            "environment": os.environ.get("ENV", "production")
+        }
+        # Injeta atributos extras passados no log
+        if hasattr(record, "extra_fields"):
+            log_record.update(record.extra_fields)
+        return json.dumps(log_record)
+
+handler = logging.StreamHandler()
+handler.setFormatter(JsonFormatter())
+
+logger = logging.getLogger("serverless-logger")
+logger.setLevel(logging.INFO)
+logger.addHandler(handler)
+
 app = Flask(__name__)
 
-# Cache simples em memória para simular idempotência (Em produção, usa-se Redis ou Firestore)
-PROCESSED_REQUESTS = set()
+@app.route('/', methods=['GET'])
+def process_event():
+    # Captura da Chave de Idempotência enviada pelo Cloud Workflows
+    idempotency_key = request.headers.get("X-Idempotency-Key", "N/A")
+    
+    extra = {
+        "extra_fields": {
+            "idempotency_key": idempotency_key,
+            "http_method": request.method,
+            "user_agent": request.headers.get("User-Agent")
+        }
+    }
 
-@app.route('/', methods=['GET', 'POST'])
-def get_chuck_joke():
-    # Obtém o cabeçalho de Idempotência
-    idempotency_key = request.headers.get("X-Idempotency-Key")
-
-    if idempotency_key and idempotency_key in PROCESSED_REQUESTS:
-        return jsonify({
-            "status": "SKIPPED",
-            "message": "Requisição já processada anteriormente (Idempotente)."
-        }), 200
+    logger.info("Requisição recebida para processamento.", extra=extra)
 
     url = "https://api.chucknorris.io/jokes/random"
-    
+
     try:
-        response = requests.get(url, timeout=5)
+        response = requests.get(url, timeout=3)
         response.raise_for_status()
         data = response.json()
-        joke = data.get("value", "Nenhuma piada encontrada.")
-        
-        # Registra a chave como processada
-        if idempotency_key:
-            PROCESSED_REQUESTS.add(idempotency_key)
+        joke = data.get("value", "")
 
-        return joke, 200, {'Content-Type': 'text/plain; charset=utf-8'}
+        extra["extra_fields"]["status_code"] = 200
+        extra["extra_fields"]["joke_id"] = data.get("id")
+        logger.info("Piada obtida com sucesso da API externa.", extra=extra)
+
+        return jsonify({
+            "status": "success",
+            "idempotency_key": idempotency_key,
+            "joke": joke
+        }), 200
 
     except requests.RequestException as e:
-        return f"Erro ao buscar piada: {str(e)}", 500
+        extra["extra_fields"]["error_detail"] = str(e)
+        logger.error("Falha ao se comunicar com a API externa.", extra=extra)
+        return jsonify({
+            "status": "error",
+            "idempotency_key": idempotency_key,
+            "message": "Erro na integração externa"
+        }), 500
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)
