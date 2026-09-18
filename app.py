@@ -5,6 +5,7 @@ from fastapi import FastAPI, HTTPException
 app = FastAPI()
 
 # Adicionando teste para a esteira de CI/CD
+# Novo teste para o CI
 
 # URL oficial da API do Chuck Norris
 CHUCK_API_URL = "https://api.chucknorris.io/jokes/random"
