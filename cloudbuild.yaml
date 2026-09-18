@@ -1,0 +1,69 @@
+steps:
+  # -------------------------------------------------------------------
+  # ETAPA 1: Testes Unitários e Análise de Código
+  # -------------------------------------------------------------------
+  - name: 'python:3.11-slim'
+    entrypoint: 'sh'
+    args:
+      - '-c'
+      - |
+        pip install --no-cache-dir -r requirements.txt pytest flake8
+        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        pytest -v
+
+  # -------------------------------------------------------------------
+  # ETAPA 2: Build do Container & Push para o Artifact Registry
+  # -------------------------------------------------------------------
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - '${_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${_REPO_NAME}/${_SERVICE_NAME}:${COMMIT_SHA}'
+      - '.'
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - '${_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${_REPO_NAME}/${_SERVICE_NAME}:${COMMIT_SHA}'
+
+  # -------------------------------------------------------------------
+  # ETAPA 3: Deploy da Imagem no Cloud Run
+  # -------------------------------------------------------------------
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'gcloud'
+    args:
+      - 'run'
+      - 'deploy'
+      - '${_SERVICE_NAME}'
+      - '--image=${_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${_REPO_NAME}/${_SERVICE_NAME}:${COMMIT_SHA}'
+      - '--region=${_LOCATION}'
+      - '--platform=managed'
+      - '--allow-unauthenticated'
+      - '--memory=256Mi'
+      - '--timeout=15s'
+
+  # -------------------------------------------------------------------
+  # ETAPA 4: Captura da URL e Deploy do Cloud Workflows
+  # -------------------------------------------------------------------
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        SERVICE_URL=$(gcloud run services describe ${_SERVICE_NAME} --platform=managed --region=${_LOCATION} --format='value(status.url)')
+        
+        gcloud workflows deploy ${_WORKFLOW_NAME} \
+          --source=workflow.yaml \
+          --location=${_LOCATION} \
+          --service-account=sa-workflows-runner@${PROJECT_ID}.iam.gserviceaccount.com \
+          --set-env-vars TARGET_SERVICE_URL="$SERVICE_URL",GCP_PROJECT_ID="${PROJECT_ID}"
+
+# Variáveis padrão customizáveis
+substitutions:
+  _LOCATION: 'us-central1'
+  _REPO_NAME: 'checkpoint-repo'
+  _SERVICE_NAME: 'chuck-norris-service'
+  _WORKFLOW_NAME: 'orquestrador-checkpoint3'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
