@@ -43,20 +43,20 @@ steps:
       - '--timeout=15s'
 
   # -------------------------------------------------------------------
-  # ETAPA 4: Captura da URL e Deploy do Cloud Workflows
+  # ETAPA 4: Captura da URL e Deploy do Cloud Workflows (Com o escape $$)
   # -------------------------------------------------------------------
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: 'bash'
     args:
       - '-c'
       - |
-        SERVICE_URL=$(gcloud run services describe ${_SERVICE_NAME} --platform=managed --region=${_LOCATION} --format='value(status.url)')
+        SERVICE_URL=$$(gcloud run services describe ${_SERVICE_NAME} --platform=managed --region=${_LOCATION} --format='value(status.url)')
         
         gcloud workflows deploy ${_WORKFLOW_NAME} \
           --source=workflow.yaml \
           --location=${_LOCATION} \
           --service-account=sa-workflows-runner@${PROJECT_ID}.iam.gserviceaccount.com \
-          --set-env-vars TARGET_SERVICE_URL="$SERVICE_URL",GCP_PROJECT_ID="${PROJECT_ID}"
+          --set-env-vars TARGET_SERVICE_URL="$$SERVICE_URL",GCP_PROJECT_ID="${PROJECT_ID}"
 
 # Variáveis padrão customizáveis
 substitutions:
